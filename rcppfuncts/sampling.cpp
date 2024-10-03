@@ -1836,3 +1836,265 @@ arma::mat gibbs_vanilla_profile(int n, arma::vec X_out, arma::vec X_covars,
   return(c_out);
 }
 
+
+
+// [[Rcpp::export]]
+double debug(arma::vec x, arma::vec mu, arma::vec sigma) {
+  return(arma::as_scalar(arma::sum(arma::log_normpdf(x, mu, sigma))));
+}
+
+// [[Rcpp::export]]
+arma::mat gibbs_C_multivariate(arma::vec c1, arma::vec c2, double rho,
+                               int L1, int L2,
+                               arma::mat theta1, arma::mat theta2,
+                               arma::mat X1, arma::mat X2,
+                               arma::vec q1, arma::vec q2,
+                               arma::vec sigma1, arma::vec sigma2){
+  int n = X1.n_rows;
+  int n_k1 = n;
+  int n_k1k2 = n;
+  arma::vec lp1 = arma::zeros(L1,1);
+  arma::vec p1 = arma::zeros(L1,1);
+  arma::vec lp2 = arma::zeros(L2,1);
+  arma::vec p2 = arma::zeros(L2,1);
+  for (int i=0; i<n; i++){
+    // first sample c1
+    for (int k1=0; k1<L1;k1++) {
+      if (c1(i)==k1+1) {
+        n_k1 = arma::sum(c1==k1+1) - 1;
+      } else {
+        n_k1 = arma::sum(c1==k1+1);
+      }
+      lp1(k1) = log(rho * q1(k1) + n_k1) +
+        arma::as_scalar(arma::sum(arma::log_normpdf(X1.row(i).t(), theta1.row(k1).t(), sigma1)));
+    }
+    p1 = arma::exp(lp1 - arma::max(lp1));
+    c1(i) = sample_arma(p1/arma::sum(p1));
+    // next sample c2
+    for (int k2=0; k2<L2; k2++) {
+      if (c2(i)==k2+1) {
+        n_k1k2 =  arma::sum( (c1 == c1(i)) % (c2== k2+1) ) -1;
+      } else {
+        n_k1k2 =  arma::sum( (c1 == c1(i)) % (c2== k2+1) );
+      }
+      lp2(k2) = log(rho*q1(c1(i)-1)*q2(k2) + n_k1k2) +
+        arma::as_scalar(arma::sum(arma::log_normpdf(X2.row(i).t(), theta2.row(k2).t(), sigma2)));
+    }
+    p2 = arma::exp(lp2 - arma::max(lp2));
+    c2(i) = sample_arma(p2/arma::sum(p2));
+  }
+  return(arma::join_horiz(c1,c2));
+}
+
+// [[Rcpp::export]]
+arma::mat gibbs_theta_multivariate(arma::vec mu0, 
+                                  arma::mat sigma0,
+                                  arma::mat sigma,
+                                  arma::mat X,
+                                  arma::vec c,
+                                  int L) {
+  int p = X.n_cols;
+  arma::mat theta = arma::zeros(L,p);
+  arma::vec mu_l = arma::zeros(p,1);
+  arma::mat sigma_l = arma::eye(p,p);
+  arma::mat sigma0_inv = arma::inv_sympd(sigma0);
+  arma::mat sigma_inv = arma::inv_sympd(sigma);
+  int n_l = X.n_rows;
+  arma::mat X_l = X;
+  for (int l=0; l<L; l++) {
+    n_l = sum(c == l+1);
+    if (n_l==0) {
+      theta.row(l) = (mu0 + chol(sigma0)*arma::randn(p,1)).t();
+    } else {
+      X_l = X.rows(find(c==l+1));
+      sigma_l = arma::inv_sympd( sigma0_inv + n_l *  sigma_inv );
+      mu_l = sigma_l * ( sigma0_inv * mu0 + n_l * sigma_inv * arma::mean(X_l,0).t() );
+      theta.row(l) = (mu_l + chol(sigma_l) * arma::randn(p,1)).t();
+    }
+  }
+  return(theta);
+}
+
+// [[Rcpp::export]]
+double gibbs_sigma_multivariate(double alpha, double beta,
+                                arma::mat theta,
+                                arma::mat X,
+                                arma::vec c,
+                                int L) {
+  int n = X.n_rows;
+  int p = X.n_cols;
+  arma::vec ssqvec = arma::zeros(n,1);
+  for (int i=0; i<n; i++) {
+    ssqvec(i) = arma::sum(arma::square(X.row(i) - theta.row(c(i)-1)));
+  }
+  double ssq = arma::sum(ssqvec);
+  double alpha_star = alpha + 0.5*n*p;
+  double beta_star = beta + 0.5 * ssq;
+  return( pow(rgamma(1, alpha_star, 1.0/beta_star)(0), -0.5));
+}
+
+
+// [[Rcpp::export]]
+List gibbs_markov_multivariate(int n,
+                               arma::mat X1, arma::mat X2,
+                               double gamma1, double gamma2,
+                               arma::vec mu01, arma::mat sigma01,
+                               arma::vec mu02, arma::mat sigma02,
+                               double alpha1, double beta1,
+                               double alpha2, double beta2,
+                               int L1, int L2,
+                               double a_rho, double b_rho,
+                               int R) {
+  // initialization
+  int p1 = X1.n_cols;
+  int p2 = X2.n_cols;
+  arma::vec q1 = rdirichlet_arma((gamma1/(L1*1.0)) * arma::ones(L1,1));
+  arma::vec q2 = rdirichlet_arma( (gamma2/(L2*1.0)) * arma::ones(L2,1));
+  arma::vec c1 = arma::zeros(n,1);
+  arma::vec c2 = arma::zeros(n,1);
+  for (int i=0; i<n; i++) {
+    c1(i) = sample_arma(q1);
+    c2(i) = sample_arma(q2);
+  }
+  arma::mat c1_out = arma::zeros(R,n);
+  c1_out.row(0) = c1.t();
+  arma::mat c2_out = arma::zeros(R,n);
+  c2_out.row(0) = c2.t();
+  arma::mat N = arma_table(c1,c2,L1,L2);
+  arma::mat M = N;
+  double M_sum = arma::accu(M);
+  double rho = 1.0;
+  arma::vec rho_out = arma::ones(R);
+  arma::mat Cmat = arma::zeros(n,2);
+  arma::mat theta1 = arma::zeros(L1,p1);
+  arma::mat theta2 = arma::zeros(L2,p2);
+  double sigma1 = 1.0;
+  double sigma2 = 1.0;
+  // sampling
+  for (int r=1; r<R; r++) {
+    // sample c
+    Cmat = gibbs_C_multivariate(c1, c2, rho,
+                                L1, L2,
+                                theta1, theta2,
+                                X1, X2,
+                                q1, q2,
+                                sigma1*arma::ones(p1), sigma2*arma::ones(p2));
+    c1 = Cmat.col(0);
+    c2 = Cmat.col(1);
+    N = arma_table(c1,c2,L1,L2);
+    // sample M
+    M = gibbs_M(N,rho,q1,q2);
+    // sample psi and psi_prime
+    arma::vec M_r = arma::sum(M,1);
+    q1 = rdirichlet_arma(M_r + (gamma1/(L1*1.0)) * arma::ones(L1,1));
+    arma::rowvec M_c = arma::sum(M,0);
+    q2 = rdirichlet_arma(M_c.t() + (gamma2/(L2*1.0)) * arma::ones(L2,1));
+    // sample rho
+    M_sum = arma::accu(M);
+    rho = gibbs_rho(rho, n, M_sum, a_rho, b_rho);
+    // sample theta
+    theta1 = gibbs_theta_multivariate(mu01, 
+                                      sigma01,
+                                      pow(sigma1,2.0)*arma::eye(p1,p1),
+                                      X1,
+                                      c1,
+                                      L1);
+    theta2 = gibbs_theta_multivariate(mu02, 
+                                      sigma02,
+                                      pow(sigma2,2.0)*arma::eye(p2,p2),
+                                      X2,
+                                      c2,
+                                      L2);
+    // sample sigma
+    sigma1 = gibbs_sigma_multivariate(alpha1, beta1,
+                                      theta1,
+                                      X1,
+                                      c1,
+                                      L1);
+    sigma2 = gibbs_sigma_multivariate(alpha2, beta2,
+                                      theta2,
+                                      X2,
+                                      c2,
+                                      L2);
+    // saving
+    rho_out(r) = rho;
+    c1_out.row(r) = c1.t();
+    c2_out.row(r) = c2.t();
+  }
+  return(List::create(Named("rho") = rho_out,
+                      Named("c1") = c1_out,
+                      Named("c2") = c2_out));
+}
+
+// [[Rcpp::export]]
+arma::vec gibbs_C_vanilla_multivariate(arma::vec c,
+                          int L,
+                          arma::mat theta,
+                          arma::mat X,
+                          double gam,
+                          arma::vec sigma){
+  int n = X.n_rows;
+  int n_k = n;
+  arma::vec lp = arma::zeros(L,1);
+  arma::vec p = arma::zeros(L,1);
+  for (int i=0; i<n; i++) {
+    for (int k=0; k<L; k++) {
+      if (c(i)==k+1) {
+        n_k = arma::sum(c==k+1)-1;
+      } else {
+        n_k = arma::sum(c==k+1);
+      }
+      lp(k) = log(n_k + (gam/(L*1.0))) +
+        arma::as_scalar(arma::sum(arma::log_normpdf(X.row(i).t(), theta.row(k).t(), sigma)));
+    }
+    p = arma::exp(lp - arma::max(lp));
+    c(i) = sample_arma(p/sum(p));
+  }
+  return(c);
+}
+
+// [[Rcpp::export]]
+arma::mat gibbs_vanilla_multivariate(int n, 
+                                     arma::mat X,
+                                     double gam,
+                                     arma::vec mu0, arma::mat sigma0,
+                                     double alpha, double beta,
+                                     int L, int R) {
+  // initialization
+  int p = X.n_cols;
+  arma::vec q = rdirichlet_arma((gam/(L*1.0)) * arma::ones(L,1));
+  arma::vec c = arma::zeros(n,1);
+  for (int i=0; i<n; i++) {
+    c(i) = sample_arma(q);
+  }
+  arma::mat c_out = arma::zeros(R,n);
+  c_out.row(0) = c.t();
+  arma::mat theta = arma::zeros(L,p);
+  double sigma = 1.0;
+  // sampling
+  for (int r=1; r<R; r++) {
+    // sample c
+    c = gibbs_C_vanilla_multivariate(c,
+                                    L,
+                                    theta,
+                                    X,
+                                    gam,
+                                    sigma*arma::ones(p));
+    // sample theta
+    theta = gibbs_theta_multivariate(mu0, 
+                                    sigma0,
+                                    pow(sigma,2.0)*arma::eye(p,p),
+                                    X,
+                                    c,
+                                    L);
+    // sample sigma
+    sigma = gibbs_sigma_multivariate(alpha, beta,
+                                     theta,
+                                     X,
+                                     c,
+                                     L);
+    // saving
+    c_out.row(r) = c.t();
+  }
+  return(c_out);
+}

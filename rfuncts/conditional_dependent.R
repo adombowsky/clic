@@ -1,4 +1,10 @@
 conditional_dependent <- function(n=200, omega0=1/2,seed=1, R=1000, B=500, Th = 1) {
+  # n = sample size
+  # omega0 = proportion in cluster 1 in C1
+  # seed = random number seed
+  # R = number of iterations
+  # B = burn-in
+  # Th = thin
   set.seed(seed)
   require(mcclust)
   require(mcclust.ext)
@@ -7,9 +13,6 @@ conditional_dependent <- function(n=200, omega0=1/2,seed=1, R=1000, B=500, Th = 
   sourceCpp("rcppfuncts/sampling.cpp")
   sourceCpp("rcppfuncts/postprocessing.cpp")
   source("rfuncts/t_hdp_conditional.R")
-  require(dirichletprocess)
-  require(multiview)
-  require(em)
   theta1 <- c(1, -1)
   theta2 <- -theta1
   X1 <- X2 <- c()
@@ -48,7 +51,7 @@ conditional_dependent <- function(n=200, omega0=1/2,seed=1, R=1000, B=500, Th = 
   rho <- fit$rho[-(1:B)]
   c1 <- fit$c1[-(1:B),]
   c2 <- fit$c2[-(1:B),]
-  rand <- rand_index_MCMC(c1,c2)
+  rand <-rand_index_MCMC(c1,c2)
   ind <- seq(1, length(rho), by = Th)
   rho <- rho[ind]
   c1 = c1[ind,]
@@ -81,7 +84,7 @@ conditional_dependent <- function(n=200, omega0=1/2,seed=1, R=1000, B=500, Th = 
   mv2_t_hdp <- mcclust.ext::minVI(psm2_t_hdp)
   c2.t_hdp <- mv2_t_hdp$cl
   mclust::adjustedRandIndex(c2.true, c2.t_hdp)
-  rand_t_hdp <- mapply(fossil::rand.index, asplit(c1_t_hdp,1), asplit(c2_t_hdp,1))
+  rand_t_hdp <- rand_index_MCMC(c1_t_hdp,c2_t_hdp)
   # comparison: separate clusterings
   ## c1
   c1_dp <- gibbs_vanilla(n=n,
@@ -122,4 +125,11 @@ conditional_dependent <- function(n=200, omega0=1/2,seed=1, R=1000, B=500, Th = 
   c1mat <- cbind(c1.true, c1.minVI, c1.t_hdp, c1.dp, c1.mcl)
   c2mat <- cbind(c2.true, c2.minVI, c2.t_hdp, c2.dp, c2.em)
   return(list(c1mat = c1mat, c2mat = c2mat, c1.clic = c1, c2.clic = c2, X=X, rand = rand, rand_t_hdp = rand_t_hdp))
+  # c1mat = c1 point estimates
+  # c2mat = c2 point estimates
+  # c1.clic = c1 posterior samples from CLIC
+  # c2.clic = c2 posterior samples from CLIC
+  # X = simulated data
+  # rand = posterior samples of the Rand index for CLIC
+  # rand_t_hdp = posterior samples of the Rand index for the t-HDP
 }
