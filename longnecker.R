@@ -8,15 +8,13 @@ require(ggplot2)
 require(latex2exp)
 sourceCpp("rcppfuncts/sampling.cpp")
 sourceCpp("rcppfuncts/postprocessing.cpp")
-# CPPData <- read.csv(file="cpp.csv")
-####Y = PRETERM, X1 = DDE_A, X2 = TOT_PCB
+CPPdata <- read.csv(file = "data/CPPdata.csv", header=T)
 ####Define data
 set.seed(1996)
 X1 = as.numeric(CPPdata$V_BWGT)
-X2 = as.numeric(CPPdata$V_MAGE)
-X3 = as.numeric(CPPdata$GESTDAY)
-X = cbind(X1, X3)
-X = X[X3/7<42,]
+X2 = as.numeric(CPPdata$GESTDAY)
+X = cbind(X1, X2)
+X = X[X2/7<42,]
 n <- 1000
 p <- ncol(X)-1
 samp <- sample(nrow(X), n)
@@ -27,28 +25,32 @@ c2.init <- as.numeric(X.samp[,2]/7 <= 34 ) + 1
 X.samp <- scale(X.samp)
 
 # fitting
-R <- 10^5 # number of iterations
-B <- 10^4 # burn-in
-Th <- 5 # thinning
+R <- 10^5
+B <- 10^4
+Th <- 5
+
+
+# initializing clusters
+
 a.clic <- Sys.time()
-fit_longnecker <- grid_gibbs_longnecker(n=nrow(X.samp), # sample size
-                    X=X.samp, # data
-                    c1 = c1.init, # initial C1
-                    c2 = c2.init, # initial C2
-                    gamma1 = 1, # view 1 concentration parameter
-                    gamma2 = 1, # view 1 concentration parameter
-                    mu01=0, # location parameter (view 1, cluster mean prior)
-                    sigma01=1, # scale parameter (view 1, cluster mean prior)
-                    mu02=0, # location parameter (view 2, cluster mean prior)
-                    sigma02=1, # scale parameter (view 2, cluster mean prior)
-                    alpha1=1, # inverse-Gamma hyperparameters (view 1)
+fit_longnecker <- grid_gibbs_longnecker(n=nrow(X.samp),
+                    X=X.samp,
+                    c1 = c1.init,
+                    c2 = c2.init,
+                    gamma1 = 1,
+                    gamma2 = 1,
+                    mu01=0,
+                    sigma01=1,
+                    mu02=0,
+                    sigma02=1,
+                    alpha1=1,
                     beta1=1,
-                    alpha2=1, # inverse-Gamma hyperparameters (view 2)
+                    alpha2=1,
                     beta2=1,
-                    L1 = 5, # number of components (view 1)
-                    L2 = 5, # number of components (view 2)
-                    rho_grid = seq(10^(-2),150,by=0.5), # support of rho
-                    R = R) # iterations
+                    L1 = 5,
+                    L2 = 5,
+                    rho_grid = seq(10^(-2),150,by=0.5),
+                    R = R)
 # burn-in and thinning
 rho <- fit_longnecker$rho[-(1:B)]
 c1 <- fit_longnecker$c1[-(1:B),]
@@ -181,7 +183,7 @@ plot_grid(tp.rand, rand.plot, acf.plot, rho.plot,
           nrow = 2)
 
 
-## analysis on C1 and C2
+## analysis on C1
 preterm <- as.numeric(X.samp.un[,2]/7 < 37) + 1
 chisq.test(preterm,c1.minVI)
 table(preterm,c2.minVI)
